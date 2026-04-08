@@ -33,7 +33,7 @@ def UniformSample_Python(dataset):
         dataset: 数据集对象
 
     Returns:
-        tuple: (users, pos_items, neg_items)
+        np.array: 采样结果，每行 [user, pos_item, neg_item]
     """
     # 训练数据
     users = dataset.trainUser
@@ -60,7 +60,9 @@ def UniformSample_Python(dataset):
             neg_items[i] = np.random.randint(0, dataset.m_items)
             attempts += 1
 
-    return users, pos_items, neg_items
+    # 合并为二维数组，与 UniformSample_original 格式一致
+    S = np.column_stack((users, pos_items, neg_items))
+    return S
 
 def batch_sampling(dataset, users, n_neg=1):
     """
@@ -174,3 +176,159 @@ def analyze_sampling(dataset, n_samples=10000):
 
     print(f"冲突样本（负样本是正样本）: {conflict}")
     print(f"冲突率: {conflict / len(users) * 100:.2f}%")
+    
+    
+## BPR损失函数类
+class BPRLoss:
+    """
+    BPR 损失函数类
+
+    封装了 BPR 损失计算和优化器更新
+
+    Attributes:
+        model: 推荐模型
+        weight_decay: L2 正则化系数
+        lr: 学习率
+        opt: Adam 优化器
+    """
+
+    def __init__(self, recmodel: PairWiseModel, config: dict):
+        """
+        初始化 BPR 损失函数
+
+        Args:
+            recmodel: 推荐模型（继承 PairWiseModel）
+            config: 配置字典，包含 'decay' 和 'lr'
+        """
+        self.model = recmodel
+        self.weight_decay = config['decay']  # 权重衰退系数
+        self.lr = config['lr']  # 学习率
+        self.opt = optim.Adam(recmodel.parameters(), lr=self.lr)  # 优化器
+
+    ## 核心训练步骤
+    def stageOne(self, users, pos, neg):
+        """
+        执行一次训练步骤
+
+        Args:
+            users: 用户 ID 张量
+            pos: 正样本物品 ID 张量
+            neg: 负样本物品 ID 张量
+
+        Returns:
+            float: 损失值
+        """
+        # 计算 BPR 损失和 L2 正则化损失
+        loss, reg_loss = self.model.bpr_loss(users, pos, neg)
+
+        # L2 损失乘以衰退系数后叠加到总损失上
+        reg_loss = reg_loss * self.weight_decay
+        loss = loss + reg_loss
+
+        # 梯度清零 → 反向传播计算梯度 → 优化器更新参数
+        self.opt.zero_grad()
+        loss.backward()
+        self.opt.step()
+
+        return loss.cpu().item()
+    
+def minibatch(*tensors, batch_size):
+    """
+    分批生成器
+
+    将输入张量按批次大小分割，用于批量训练
+
+    Args:
+        *tensors: 输入张量（多个）
+        batch_size: 批量大小
+
+    Yields:
+        tuple: 批量数据
+    """
+    n_samples = tensors[0].shape[0]
+
+    for i in range(0, n_samples, batch_size):
+        yield tuple(tensor[i:i+batch_size] for tensor in tensors)
+        
+def shuffle(*arrays):
+    """
+    打乱数据顺序
+
+    Args:
+        *arrays: 输入数组（多个）
+
+    Returns:
+        tuple: 打乱后的数组
+    """
+    # 获取随机索引
+    indices = np.random.permutation(len(arrays[0]))
+
+    # 打乱所有数组
+    return tuple(array[indices] for array in arrays)
+
+class timer:
+    """
+    计时上下文管理器
+
+    用于测量代码块的执行时间
+
+    使用示例:
+        with timer(name="Sample"):
+            do_something()
+        print(timer.dict())  # 输出: |Sample:0.12|
+    """
+    from time import time
+    TAPE = [-1]  # 全局时间记录
+    NAMED_TAPE = {}
+
+    @staticmethod
+    def get():
+        """获取最后一次计时结果"""
+        if len(timer.TAPE) > 1:
+            return timer.TAPE.pop()
+        else:
+            return -1
+
+    @staticmethod
+    def dict(select_keys=None):
+        """获取所有命名计时结果"""
+        hint = "|"
+        if select_keys is None:
+            for key, value in timer.NAMED_TAPE.items():
+                hint = hint + f"{key}:{value:.2f}|"
+        else:
+            for key in select_keys:
+                value = timer.NAMED_TAPE[key]
+                hint = hint + f"{key}:{value:.2f}|"
+        return hint
+
+    @staticmethod
+    def zero(select_keys=None):
+        """清零计时器"""
+        if select_keys is None:
+            for key in timer.NAMED_TAPE:
+                timer.NAMED_TAPE[key] = 0
+        else:
+            for key in select_keys:
+                timer.NAMED_TAPE[key] = 0
+
+    def __init__(self, tape=None, **kwargs):
+        """初始化计时器"""
+        if kwargs.get('name'):
+            timer.NAMED_TAPE[kwargs['name']] = timer.NAMED_TAPE.get(kwargs['name'], 0.)
+            self.named = kwargs['name']
+        else:
+            self.named = False
+            self.tape = tape or timer.TAPE
+
+    def __enter__(self):
+        """进入上下文，开始计时"""
+        self.start = timer.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """退出上下文，结束计时"""
+        if self.named:
+            timer.NAMED_TAPE[self.named] += timer.time() - self.start
+        else:
+            self.tape.append(timer.time() - self.start)
