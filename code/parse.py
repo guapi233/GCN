@@ -28,7 +28,7 @@ def parse_args():
                         help="BPR 训练的批量大小")
     parser.add_argument('--testbatch', type=int, default=100,
                         help="测试时的用户批量大小")
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=5,
                         help="训练轮数")
     parser.add_argument('--lr', type=float, default=0.001,
                         help="学习率")

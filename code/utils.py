@@ -332,3 +332,160 @@ class timer:
             timer.NAMED_TAPE[self.named] += timer.time() - self.start
         else:
             self.tape.append(timer.time() - self.start)
+
+def RecallPrecision_ATk(rating_np, test_data, k):
+    """
+    计算 Recall@K 和 Precision@K
+
+    Args:
+        rating_np: 评分矩阵 (n_users, n_items)
+        test_data: 测试集字典 {user: [items]}
+        k: Top-K
+
+    Returns:
+        tuple: (recall, precision)
+    """
+    # 用户总数
+    n_users = rating_np.shape[0]
+
+    # 统计
+    hit = 0
+    precision_sum = 0
+    recall_sum = 0
+
+    for user in range(n_users):
+        # 测试集物品
+        test_items = test_data.get(user, [])
+
+        if len(test_items) == 0:
+            continue
+
+        # Top-K 推荐
+        _, top_k = torch.topk(
+            torch.from_numpy(rating_np[user]),
+            k=k
+        )
+        top_k = top_k.numpy()
+
+        # 命中
+        hit_items = set(top_k) & set(test_items)
+        hit += len(hit_items)
+
+        # Recall
+        recall_sum += len(hit_items) / len(test_items)
+
+        # Precision
+        precision_sum += len(hit_items) / k
+
+    # 平均
+    recall = hit / sum(len(test_data.get(u, [])) for u in range(n_users))
+    precision = precision_sum / n_users
+
+    return recall, precision
+
+
+def NDCGatK_r(rating_np, test_data, k):
+    """
+    计算 NDCG@K
+
+    Args:
+        rating_np: 评分矩阵
+        test_data: 测试集字典
+        k: Top-K
+
+    Returns:
+        float: NDCG@K
+    """
+    n_users = rating_np.shape[0]
+
+    ndcg = 0.0
+
+    for user in range(n_users):
+        test_items = test_data.get(user, [])
+
+        if len(test_items) == 0:
+            continue
+
+        # Top-K 推荐
+        _, top_k = torch.topk(
+            torch.from_numpy(rating_np[user]),
+            k=k
+        )
+        top_k = top_k.numpy()
+
+        # 计算 DCG
+        dcg = 0.0
+        for i, item in enumerate(top_k):
+            if item in test_items:
+                dcg += 1.0 / np.log2(i + 2)
+
+        # 计算 IDCG
+        idcg = 0.0
+        for i in range(min(len(test_items), k)):
+            idcg += 1.0 / np.log2(i + 2)
+
+        # NDCG
+        if idcg > 0:
+            ndcg += dcg / idcg
+
+    return ndcg / n_users
+
+def set_seed(seed):
+    """
+    设置随机种子
+
+    Args:
+        seed: 随机种子
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def get_checkpoint_path(config):
+    """
+    生成 checkpoint 路径
+
+    Args:
+        config: 配置字典
+
+    Returns:
+        str: 模型保存路径
+    """
+    path = config.get('path', './checkpoints')
+
+    # 文件名：模型_数据集_维度_层数.pt
+    filename = f"{config['model']}_{config['dataset']}_"
+    filename += f"{config['recdim']}_{config['layer']}.pt"
+
+    return os.path.join(path, filename)
+
+def dynamic_sampling(model, dataset, epoch, max_epochs):
+    """
+    动态采样
+
+    采样比例随训练进度变化
+
+    Args:
+        model: 模型对象
+        dataset: 数据集对象
+        epoch: 当前轮数
+        max_epochs: 总轮数
+
+    Returns:
+        float: 采样比例
+    """
+    # 采样比例随训练进度变化
+    ratio = 1.0 + epoch / max_epochs
+
+    return min(ratio, 5.0)
+
+def getFileName():
+    if world.model_name == 'mf':
+        file = f"mf-{world.dataset}-{world.config['latent_dim_rec']}.pth.tar"
+    elif world.model_name == 'lgn':
+        file = f"lgn-{world.dataset}-{world.config['lightGCN_n_layers']}-{world.config['latent_dim_rec']}.pth.tar"
+    return os.path.join(world.FILE_PATH,file)
