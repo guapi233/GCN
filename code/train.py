@@ -9,7 +9,7 @@ import torch
 world.config['lr'] = 0.001
 world.config['decay'] = 1e-4
 world.config['bpr_batch_size'] = 2048
-world.config['epochs'] = 1000
+world.config['epochs'] = 1
 
 world.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
