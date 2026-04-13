@@ -25,9 +25,7 @@ except:
     
 def UniformSample_Python(dataset):
     """
-    优化版负采样
-
-    使用向量化操作加速
+    优化版负采样（向量化加速）
 
     Args:
         dataset: 数据集对象
@@ -35,32 +33,31 @@ def UniformSample_Python(dataset):
     Returns:
         np.array: 采样结果，每行 [user, pos_item, neg_item]
     """
-    # 训练数据
     users = dataset.trainUser
     pos_items = dataset.trainItem
-
-    # 用户数量
     n_samples = len(users)
+    m_items = dataset.m_items
 
-    # 负采样
-    neg_items = np.random.randint(
-        0,
-        dataset.m_items,
-        size=n_samples
-    )
+    # 预构建用户-正样本集合字典（O(1) 查找）
+    user_pos_set = {u: set(dataset.allPos[u]) for u in np.unique(users)}
 
-    # 过滤：确保负样本不是正样本
-    for i in range(n_samples):
-        user = users[i]
-        pos = dataset.allPos[user]
+    # 向量化采样
+    neg_items = np.random.randint(0, m_items, size=n_samples)
 
-        # 重采样直到不是正样本
-        attempts = 0
-        while neg_items[i] in pos and attempts < 10:
-            neg_items[i] = np.random.randint(0, dataset.m_items)
-            attempts += 1
+    # 向量化过滤：标记需要重采样的位置
+    mask = np.array([neg_items[i] in user_pos_set.get(users[i], set()) 
+                     for i in range(n_samples)])
+    
+    # 最多重试 10 次
+    for _ in range(10):
+        retry_indices = np.where(mask)[0]
+        if len(retry_indices) == 0:
+            break
+        new_neg = np.random.randint(0, m_items, size=len(retry_indices))
+        neg_items[retry_indices] = new_neg
+        mask[retry_indices] = [new_neg[i] in user_pos_set.get(users[retry_indices[i]], set()) 
+                               for i in range(len(retry_indices))]
 
-    # 合并为二维数组，与 UniformSample_original 格式一致
     S = np.column_stack((users, pos_items, neg_items))
     return S
 

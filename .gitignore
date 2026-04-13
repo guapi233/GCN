@@ -1,0 +1,12 @@
+# 日志和检查点
+runs/
+checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# 数据集（可选）
+data/*/
+!data/*/.gitkeep
